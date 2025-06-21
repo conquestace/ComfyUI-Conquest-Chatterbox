@@ -1,4 +1,5 @@
 import os
+import re
 import torch
 import folder_paths
 import tempfile
@@ -13,6 +14,27 @@ from .modules.chatterbox_handler import (
     CHATTERBOX_MODEL_SUBDIR,
     DEFAULT_MODEL_PACK_NAME
 )
+
+
+def _split_text_into_chunks(text, tokenizer, max_tokens=1000):
+    """Split text into chunks no longer than ``max_tokens`` using ``tokenizer``."""
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    chunks = []
+    current = ""
+    for sentence in sentences:
+        if not sentence:
+            continue
+        candidate = (current + " " + sentence).strip()
+        token_count = tokenizer.text_to_tokens(candidate).numel()
+        if token_count <= max_tokens:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            current = sentence
+    if current:
+        chunks.append(current)
+    return chunks
 
 class ChatterboxTTSNode:
     @classmethod
@@ -87,13 +109,19 @@ class ChatterboxTTSNode:
                 audio_prompt_path_temp = None
 
         try:
-            wav_tensor_chatterbox = chatterbox_model.generate(
-                text,
-                audio_prompt_path=audio_prompt_path_temp,
-                exaggeration=exaggeration,
-                temperature=temperature,
-                cfg_weight=cfg_weight
-            ) 
+            text_chunks = _split_text_into_chunks(text, chatterbox_model.tokenizer)
+            wav_segments = []
+            for idx, chunk in enumerate(text_chunks):
+                wav_seg = chatterbox_model.generate(
+                    chunk,
+                    audio_prompt_path=audio_prompt_path_temp if idx == 0 else None,
+                    exaggeration=exaggeration,
+                    temperature=temperature,
+                    cfg_weight=cfg_weight
+                )
+                wav_segments.append(wav_seg)
+
+            wav_tensor_chatterbox = torch.cat(wav_segments, dim=1)
         except Exception as e:
             print(f"ChatterboxTTS: Error during TTS generation: {e}")
             dummy_sr = 24000
