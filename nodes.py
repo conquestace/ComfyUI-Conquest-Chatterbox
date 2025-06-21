@@ -43,6 +43,12 @@ class ChatterboxTTSNode:
     CATEGORY = "audio/generation"
     OUTPUT_NODE = True 
 
+    def _chunk_text(self, text, max_chars=300):
+        """Split text into chunks of up to ``max_chars`` each."""
+        if not text:
+            return []
+        return [text[i:i + max_chars] for i in range(0, len(text), max_chars)]
+
     def synthesize(self, model_pack_name, text, exaggeration, temperature, cfg_weight, seed, device, audio_prompt=None):
         if not text.strip():
             #print("Chatterbox TTS: Empty text provided, returning silent audio.")
@@ -87,13 +93,21 @@ class ChatterboxTTSNode:
                 audio_prompt_path_temp = None
 
         try:
-            wav_tensor_chatterbox = chatterbox_model.generate(
-                text,
-                audio_prompt_path=audio_prompt_path_temp,
-                exaggeration=exaggeration,
-                temperature=temperature,
-                cfg_weight=cfg_weight
-            ) 
+            text_chunks = self._chunk_text(text, 300)
+            chunk_waveforms = []
+            for chunk in text_chunks:
+                wav_tensor = chatterbox_model.generate(
+                    chunk,
+                    audio_prompt_path=audio_prompt_path_temp,
+                    exaggeration=exaggeration,
+                    temperature=temperature,
+                    cfg_weight=cfg_weight,
+                )
+                chunk_waveforms.append(wav_tensor.cpu())
+            if chunk_waveforms:
+                wav_tensor_chatterbox = torch.cat(chunk_waveforms, dim=-1)
+            else:
+                wav_tensor_chatterbox = torch.zeros(0, dtype=torch.float32)
         except Exception as e:
             print(f"ChatterboxTTS: Error during TTS generation: {e}")
             dummy_sr = 24000
