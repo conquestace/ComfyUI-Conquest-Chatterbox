@@ -49,7 +49,9 @@ class ChatterboxVC:
 
         # S3Gen weights (safetensors)
         s3gen = S3Gen()
-        s3gen.load_state_dict(load_file(ckpt_dir / "s3gen.safetensors"), strict=False)
+        s3gen.load_state_dict(
+            load_file(ckpt_dir / "s3gen.safetensors", map_location=map_loc), strict=False
+        )
 
         return cls(s3gen, device, ref_dict)
 

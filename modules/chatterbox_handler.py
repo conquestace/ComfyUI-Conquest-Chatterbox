@@ -21,7 +21,13 @@ VC_MODEL_CACHE = {}
 CHATTERBOX_MODEL_SUBDIR = "chatterbox_tts"
 CHATTERBOX_REPO_ID = "ResembleAI/chatterbox"
 
-CHATTERBOX_FILES_TO_DOWNLOAD = ["ve.pt", "t3_cfg.pt", "s3gen.pt", "tokenizer.json", "conds.pt"]
+CHATTERBOX_FILES_TO_DOWNLOAD = [
+    "ve.safetensors",
+    "t3_cfg.safetensors",
+    "s3gen.safetensors",
+    "tokenizer.json",
+    "conds.pt",
+]
 DEFAULT_MODEL_PACK_NAME = "resembleai_default_voice"
 
 def get_chatterbox_model_pack_names():
@@ -79,7 +85,7 @@ def download_chatterbox_model_pack_if_missing(model_pack_name):
     
     all_files_successfully_managed = True
 
-    vc_required_files = ["s3gen.pt", "conds.pt"]
+    vc_required_files = ["s3gen.safetensors", "conds.pt"]
 
     files_to_check = CHATTERBOX_FILES_TO_DOWNLOAD
     
@@ -116,32 +122,19 @@ def load_chatterbox_tts_model(model_pack_name, device_str="cuda"):
     return model
 
 def get_cached_chatterbox_tts_model(model_pack_name, device_str="cuda"):
-    """Loads and caches the ChatterboxTTS model."""
+    """Load and cache one TTS model per device."""
     if not model_pack_name:
         available_packs = get_chatterbox_model_pack_names()
         model_pack_name = available_packs[0] if available_packs else DEFAULT_MODEL_PACK_NAME
         print(f"ChatterboxTTS: No model pack specified for TTS, using '{model_pack_name}'.")
 
-    cache_key = (model_pack_name, device_str, "tts")
-    current_model = TTS_MODEL_CACHE.get(cache_key)
-    model_device_correct = False
-    if current_model is not None and hasattr(current_model, 'device'):
-        try:
-            if str(current_model.device) == device_str:
-                model_device_correct = True
-        except Exception as e:
-            print(f"ChatterboxTTS: Error checking cached TTS model device: {e}. Will reload.")
+    cache_entry = TTS_MODEL_CACHE.get(device_str)
+    if cache_entry and cache_entry[0] == model_pack_name:
+        return cache_entry[1]
 
-    if current_model is not None and model_device_correct:
-        return current_model
-    else:
-        if current_model is not None and not model_device_correct:
-            print(f"ChatterboxTTS: Device mismatch for cached TTS model '{model_pack_name}'. Reloading.")
-        else:
-            print(f"ChatterboxTTS: TTS Model for '{model_pack_name}' on '{device_str}' not in cache. Loading...")
-        
-        TTS_MODEL_CACHE[cache_key] = load_chatterbox_tts_model(model_pack_name, device_str)
-        return TTS_MODEL_CACHE[cache_key]
+    model = load_chatterbox_tts_model(model_pack_name, device_str)
+    TTS_MODEL_CACHE[device_str] = (model_pack_name, model)
+    return model
 
 
 def load_chatterbox_vc_model(model_pack_name, device_str="cuda"):
@@ -153,7 +146,7 @@ def load_chatterbox_vc_model(model_pack_name, device_str="cuda"):
     #print(f"ChatterboxVC: Attempting to load VC model pack '{model_pack_name}' from '{ckpt_dir}'.")
 
     if not download_chatterbox_model_pack_if_missing(model_pack_name):
-        vc_min_files = ["s3gen.pt", "conds.pt"]
+        vc_min_files = ["s3gen.safetensors", "conds.pt"]
         for f_name in vc_min_files:
             if not os.path.exists(os.path.join(ckpt_dir, f_name)):
                  print(f"ChatterboxVC: Critical file '{f_name}' for VC is missing from pack '{model_pack_name}' after download attempt. Loading will likely fail.")
@@ -170,36 +163,24 @@ def load_chatterbox_vc_model(model_pack_name, device_str="cuda"):
         model = ChatterboxVC.from_local(ckpt_dir, device=device_str)
     except Exception as e:
         print(f"ChatterboxVC: Error during ChatterboxVC.from_local('{ckpt_dir}', device='{device_str}'): {e}")
-        print(f"ChatterboxVC: Please ensure at least 's3gen.pt' and optionally 'conds.pt' (for default voice) are present in {ckpt_dir} or can be downloaded from {CHATTERBOX_REPO_ID}.")
+        print(f"ChatterboxVC: Please ensure at least 's3gen.safetensors' and optionally 'conds.pt' (for default voice) are present in {ckpt_dir} or can be downloaded from {CHATTERBOX_REPO_ID}.")
         raise
     return model
 
 def get_cached_chatterbox_vc_model(model_pack_name, device_str="cuda"):
-    """Loads and caches the ChatterboxVC model."""
+    """Load and cache one VC model per device."""
     if not model_pack_name:
         available_packs = get_chatterbox_model_pack_names()
         model_pack_name = available_packs[0] if available_packs else DEFAULT_MODEL_PACK_NAME
         print(f"ChatterboxVC: No model pack specified for VC, using '{model_pack_name}'.")
 
-    cache_key = (model_pack_name, device_str, "vc")
-    current_model = VC_MODEL_CACHE.get(cache_key)
-    model_device_correct = False
-    if current_model is not None and hasattr(current_model, 'device'):
-        try:
-            if str(current_model.device) == device_str:
-                model_device_correct = True
-        except Exception as e:
-            print(f"ChatterboxVC: Error checking cached VC model device: {e}. Will reload.")
+    cache_entry = VC_MODEL_CACHE.get(device_str)
+    if cache_entry and cache_entry[0] == model_pack_name:
+        return cache_entry[1]
 
-    if current_model is not None and model_device_correct:
-        return current_model
-    else:
-        if current_model is not None and not model_device_correct:
-            print(f"ChatterboxVC: Device mismatch for cached VC model '{model_pack_name}'. Reloading.")
-        else:
-            print(f"ChatterboxVC: VC Model for '{model_pack_name}' on '{device_str}' not in cache. Loading...")
-        VC_MODEL_CACHE[cache_key] = load_chatterbox_vc_model(model_pack_name, device_str)
-        return VC_MODEL_CACHE[cache_key]
+    model = load_chatterbox_vc_model(model_pack_name, device_str)
+    VC_MODEL_CACHE[device_str] = (model_pack_name, model)
+    return model
 
 
 def set_chatterbox_seed(seed: int):
@@ -215,7 +196,6 @@ def set_chatterbox_seed(seed: int):
     
     torch.manual_seed(actual_seed_for_torch_random)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(actual_seed_for_torch_random)
         torch.cuda.manual_seed_all(actual_seed_for_torch_random)
     random.seed(actual_seed_for_torch_random)
     np.random.seed(actual_seed_for_numpy)
