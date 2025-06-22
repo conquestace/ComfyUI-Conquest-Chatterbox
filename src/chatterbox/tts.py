@@ -7,6 +7,8 @@ import torch.nn.functional as F
 import gc
 from huggingface_hub import hf_hub_download
 
+from .tokenization import tokenize_prompt
+
 from .models.t3 import T3
 from .models.s3tokenizer import S3_SR, drop_invalid_tokens
 from .models.s3gen import S3GEN_SR, S3Gen
@@ -42,7 +44,12 @@ def punc_norm(text: str) -> str:
 
 
 def chunk_text(text: str, chunk_size: int = 300):
-    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+    """Split text into ``chunk_size`` character tokens.
+
+    This thin wrapper over :func:`tokenize_prompt` exists for backward
+    compatibility with earlier releases that exposed ``chunk_text``.
+    """
+    return tokenize_prompt(text, chunk_size)
 
 
 @dataclass
@@ -192,6 +199,13 @@ class ChatterboxTTS:
         chunk_size: int = 300,
         max_retries: int = 1,
     ):
+        """Generate speech for ``text`` using sequential 300 character tokens.
+
+        ``text`` is split into tokens of length ``chunk_size`` characters using
+        :func:`tokenize_prompt`. Each token is processed individually to avoid
+        GPU out-of-memory issues on long passages. The resulting audio segments
+        are spliced together before being returned.
+        """
         def safe_segment(t):
             for attempt in range(max_retries + 1):
                 try:
@@ -213,8 +227,8 @@ class ChatterboxTTS:
             return safe_segment(text)
 
         segments = []
-        for chunk in chunk_text(text, chunk_size):
-            segment = safe_segment(chunk)
+        for token in chunk_text(text, chunk_size):
+            segment = safe_segment(token)
             segments.append(segment.squeeze(0).cpu().numpy())
 
         merged = splice_audios(segments)
