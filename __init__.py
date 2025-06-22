@@ -1,16 +1,16 @@
 import os
 import folder_paths
-from .nodes import ChatterboxTTSNode, ChatterboxVCNode
+from .nodes import ConquestChatterboxTTSNode, ConquestChatterboxVCNode
 from .modules.chatterbox_handler import CHATTERBOX_MODEL_SUBDIR, DEFAULT_MODEL_PACK_NAME
 
 NODE_CLASS_MAPPINGS = {
-    "ChatterboxTTS": ChatterboxTTSNode,
-    "ChatterboxVC": ChatterboxVCNode,
+    "ChatterboxTTS": ConquestChatterboxTTSNode,
+    "ChatterboxVC": ConquestChatterboxVCNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ChatterboxTTS": "Chatterbox TTS 📢",
-    "ChatterboxVC": "Chatterbox Voice Conversion 🗣️",
+    "ChatterboxTTS": "conquest-chatterbox",
+    "ChatterboxVC": "conquest-chatterbox",
 }
 
 # WEB_DIRECTORY = "./js" 

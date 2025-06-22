@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1>ComfyUI Chatterbox TTS & Voice Conversion Node</h1>
+<h1>conquest-chatterbox</h1>
 
 <p align="center">
   <img src="./assets/preview.png" alt="ComfyUI-KEEP Workflow Example">
@@ -12,22 +12,22 @@ Custom nodes for ComfyUI that integrate the [Resemble AI Chatterbox](https://git
 
 ## 📢 Features
 
-*   **Chatterbox TTS Node:**
+*   **conquest-chatterbox Node:**
     *   Synthesize speech from text.
     *   Optional voice cloning using an audio prompt.
     *   Adjustable parameters: exaggeration, temperature, CFG weight, seed.
     *   Handles long passages by automatically splitting text into manageable chunks.
-*   **Chatterbox Voice Conversion Node:**
+*   **conquest-chatterbox Node:**
     *   Convert the voice in a source audio file to sound like a target voice.
     *   Uses a target audio file for voice characteristics or defaults to a built-in voice if no target is provided.
 *   **Automatic Model Downloading:** Necessary model files are automatically downloaded from Hugging Face (`ResembleAI/chatterbox`) on first use if not found locally.
 
 
-## 🎭 Chatterbox TTS Demo Samples  
+## 🎭 conquest-chatterbox Demo Samples
 Check the [official demo](https://resemble-ai.github.io/chatterbox_demopage/)
 
 ## Installation
-Via ComfyUI Manager [ComfyUI-ChatterboxTTS](https://registry.comfy.org/publishers/wildai/nodes/ComfyUI-ChatterboxTTS) or by cloning the repo:
+Via ComfyUI Manager [conquest-chatterbox](https://registry.comfy.org/publishers/wildai/nodes/ComfyUI-ChatterboxTTS) or by cloning the repo:
 
 1.  **Clone this repository:**
     ```bash
@@ -56,8 +56,7 @@ Via ComfyUI Manager [ComfyUI-ChatterboxTTS](https://registry.comfy.org/publisher
 
 After installation and restarting ComfyUI:
 
-*   The **"Chatterbox TTS 📢"** node will be available under the `audio/generation` category.
-*   The **"Chatterbox Voice Conversion 🗣️"** node will be available under the `audio/conversion` category.
+*   The **"conquest-chatterbox"** node will be available under the `audio/generation` and `audio/conversion` categories.
 
 Load example workflows from the `workflow-examples/` directory in this repository to get started.
 
