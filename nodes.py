@@ -36,7 +36,7 @@ def _split_text_into_chunks(text, tokenizer, max_tokens=1000):
         chunks.append(current)
     return chunks
 
-class ChatterboxTTSNode:
+class Conquest-ChatterboxTTSNode2:
     @classmethod
     def INPUT_TYPES(cls):
         available_model_packs = get_chatterbox_model_pack_names()
@@ -138,7 +138,7 @@ class ChatterboxTTSNode:
         return ({"waveform": wav_tensor_comfy, "sample_rate": chatterbox_model.sr},)
 
 
-class ChatterboxVCNode:
+class Conquest2-ChatterboxVCNode:
     @classmethod
     def INPUT_TYPES(cls):
         available_model_packs = get_chatterbox_model_pack_names()
