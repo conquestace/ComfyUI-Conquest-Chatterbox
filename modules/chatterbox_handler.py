@@ -122,26 +122,18 @@ def get_cached_chatterbox_tts_model(model_pack_name, device_str="cuda"):
         model_pack_name = available_packs[0] if available_packs else DEFAULT_MODEL_PACK_NAME
         print(f"ChatterboxTTS: No model pack specified for TTS, using '{model_pack_name}'.")
 
-    cache_key = (model_pack_name, device_str, "tts")
-    current_model = TTS_MODEL_CACHE.get(cache_key)
-    model_device_correct = False
-    if current_model is not None and hasattr(current_model, 'device'):
-        try:
-            if str(current_model.device) == device_str:
-                model_device_correct = True
-        except Exception as e:
-            print(f"ChatterboxTTS: Error checking cached TTS model device: {e}. Will reload.")
+    current_entry = TTS_MODEL_CACHE.get(device_str)
+    if current_entry and current_entry[0] == model_pack_name:
+        return current_entry[1]
 
-    if current_model is not None and model_device_correct:
-        return current_model
-    else:
-        if current_model is not None and not model_device_correct:
-            print(f"ChatterboxTTS: Device mismatch for cached TTS model '{model_pack_name}'. Reloading.")
-        else:
-            print(f"ChatterboxTTS: TTS Model for '{model_pack_name}' on '{device_str}' not in cache. Loading...")
-        
-        TTS_MODEL_CACHE[cache_key] = load_chatterbox_tts_model(model_pack_name, device_str)
-        return TTS_MODEL_CACHE[cache_key]
+    if current_entry:
+        # Replace cached model for this device
+        TTS_MODEL_CACHE.pop(device_str, None)
+
+    print(f"ChatterboxTTS: Loading model '{model_pack_name}' on {device_str}...")
+    model = load_chatterbox_tts_model(model_pack_name, device_str)
+    TTS_MODEL_CACHE[device_str] = (model_pack_name, model)
+    return model
 
 
 def load_chatterbox_vc_model(model_pack_name, device_str="cuda"):
@@ -181,25 +173,17 @@ def get_cached_chatterbox_vc_model(model_pack_name, device_str="cuda"):
         model_pack_name = available_packs[0] if available_packs else DEFAULT_MODEL_PACK_NAME
         print(f"ChatterboxVC: No model pack specified for VC, using '{model_pack_name}'.")
 
-    cache_key = (model_pack_name, device_str, "vc")
-    current_model = VC_MODEL_CACHE.get(cache_key)
-    model_device_correct = False
-    if current_model is not None and hasattr(current_model, 'device'):
-        try:
-            if str(current_model.device) == device_str:
-                model_device_correct = True
-        except Exception as e:
-            print(f"ChatterboxVC: Error checking cached VC model device: {e}. Will reload.")
+    current_entry = VC_MODEL_CACHE.get(device_str)
+    if current_entry and current_entry[0] == model_pack_name:
+        return current_entry[1]
 
-    if current_model is not None and model_device_correct:
-        return current_model
-    else:
-        if current_model is not None and not model_device_correct:
-            print(f"ChatterboxVC: Device mismatch for cached VC model '{model_pack_name}'. Reloading.")
-        else:
-            print(f"ChatterboxVC: VC Model for '{model_pack_name}' on '{device_str}' not in cache. Loading...")
-        VC_MODEL_CACHE[cache_key] = load_chatterbox_vc_model(model_pack_name, device_str)
-        return VC_MODEL_CACHE[cache_key]
+    if current_entry:
+        VC_MODEL_CACHE.pop(device_str, None)
+
+    print(f"ChatterboxVC: Loading model '{model_pack_name}' on {device_str}...")
+    model = load_chatterbox_vc_model(model_pack_name, device_str)
+    VC_MODEL_CACHE[device_str] = (model_pack_name, model)
+    return model
 
 
 def set_chatterbox_seed(seed: int):
@@ -215,7 +199,6 @@ def set_chatterbox_seed(seed: int):
     
     torch.manual_seed(actual_seed_for_torch_random)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(actual_seed_for_torch_random)
         torch.cuda.manual_seed_all(actual_seed_for_torch_random)
     random.seed(actual_seed_for_torch_random)
     np.random.seed(actual_seed_for_numpy)
