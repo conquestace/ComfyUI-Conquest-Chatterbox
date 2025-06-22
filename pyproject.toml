@@ -1,15 +1,15 @@
 [project]
-name = "ComfyUI-ChatterboxTTS"
-description = "ComfyUI Chatterbox TTS & Voice Conversion Node"
+name = "ComfyUI-conquestchatterbox"
+description = "ComfyUI Conquest Chatterbox Node"
 version = "1.0.1"
 license = {file = "LICENSE"}
 dependencies = ["torch", "torchaudio", "librosa", "numpy", "huggingface_hub", "resemble-perth", "einops", "scipy", "tokenizers", "soundfile", "s3tokenizer", "tqdm", "conformer"]
 
 [project.urls]
-Repository = "https://github.com/wildminder/ComfyUI-Chatterbox"
+Repository = "https://github.com/wildminder/ComfyUI-conquestchatterbox"
 #  Used by Comfy Registry https://comfyregistry.org
 
 [tool.comfy]
 PublisherId = "wildai"
-DisplayName = "ComfyUI-ChatterboxTTS"
+DisplayName = "ComfyUI-conquestchatterbox"
 Icon = ""

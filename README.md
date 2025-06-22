@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1>ComfyUI Chatterbox TTS & Voice Conversion Node</h1>
+<h1>ComfyUI-conquestchatterbox</h1>
 
 <p align="center">
   <img src="./assets/preview.png" alt="ComfyUI-KEEP Workflow Example">
@@ -26,17 +26,17 @@ Custom nodes for ComfyUI that integrate the [Resemble AI Chatterbox](https://git
 Check the [official demo](https://resemble-ai.github.io/chatterbox_demopage/)
 
 ## Installation
-Via ComfyUI Manager [ComfyUI-ChatterboxTTS](https://registry.comfy.org/publishers/wildai/nodes/ComfyUI-ChatterboxTTS) or by cloning the repo:
+Via ComfyUI Manager [ComfyUI-conquestchatterbox](https://registry.comfy.org/publishers/wildai/nodes/ComfyUI-conquestchatterbox) or by cloning the repo:
 
 1.  **Clone this repository:**
     ```bash
-    git clone https://github.com/wildminder/ComfyUI-Chatterbox.git ComfyUI/custom_nodes/ComfyUI-Chatterbox
+    git clone https://github.com/wildminder/ComfyUI-conquestchatterbox.git ComfyUI/custom_nodes/ComfyUI-conquestchatterbox
     ```
 
 2.  **Install Dependencies:**
     Navigate to the custom node's directory and install the required packages:
     ```bash
-    cd ComfyUI/custom_nodes/ComfyUI-Chatterbox
+    cd ComfyUI/custom_nodes/ComfyUI-conquestchatterbox
     pip install -r requirements.txt
     ```
 
