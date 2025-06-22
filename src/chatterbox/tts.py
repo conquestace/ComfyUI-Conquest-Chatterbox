@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 from pathlib import Path
+import gc
 
 import librosa
 import torch
 import perth
 import torch.nn.functional as F
+import textwrap
 from huggingface_hub import hf_hub_download
 
 from .models.t3 import T3
@@ -58,6 +60,13 @@ def punc_norm(text: str) -> str:
         text += "."
 
     return text
+
+
+def split_text_into_chunks(text: str, chunk_size: int = 300):
+    """Split text into chunks no longer than ``chunk_size`` characters."""
+    if not text:
+        return []
+    return textwrap.wrap(text, width=chunk_size, break_long_words=False, break_on_hyphens=False)
 
 
 @dataclass
@@ -188,6 +197,35 @@ class ChatterboxTTS:
         ).to(device=self.device)
         self.conds = Conditionals(t3_cond, s3gen_ref_dict)
 
+    def _generate_chunk(self, text_segment, cfg_weight, temperature):
+        text_segment = punc_norm(text_segment)
+        text_tokens = self.tokenizer.text_to_tokens(text_segment).to(self.device)
+        text_tokens = torch.cat([text_tokens, text_tokens], dim=0)
+
+        sot = self.t3.hp.start_text_token
+        eot = self.t3.hp.stop_text_token
+        text_tokens = F.pad(text_tokens, (1, 0), value=sot)
+        text_tokens = F.pad(text_tokens, (0, 1), value=eot)
+
+        with torch.inference_mode():
+            speech_tokens = self.t3.inference(
+                t3_cond=self.conds.t3,
+                text_tokens=text_tokens,
+                max_new_tokens=1000,  # TODO: use the value in config
+                temperature=temperature,
+                cfg_weight=cfg_weight,
+            )
+            speech_tokens = speech_tokens[0]
+            speech_tokens = drop_invalid_tokens(speech_tokens).to(self.device)
+
+            wav, _ = self.s3gen.inference(
+                speech_tokens=speech_tokens,
+                ref_dict=self.conds.gen,
+            )
+            wav = wav.squeeze(0).detach().cpu().numpy()
+            watermarked_wav = self.watermarker.apply_watermark(wav, sample_rate=self.sr)
+        return torch.from_numpy(watermarked_wav).unsqueeze(0)
+
     def generate(
         self,
         text,
@@ -210,35 +248,31 @@ class ChatterboxTTS:
                 emotion_adv=exaggeration * torch.ones(1, 1, 1),
             ).to(device=self.device)
 
-        # Norm and tokenize text
-        text = punc_norm(text)
-        text_tokens = self.tokenizer.text_to_tokens(text).to(self.device)
-        text_tokens = torch.cat([text_tokens, text_tokens], dim=0)  # Need two seqs for CFG
+        segments = split_text_into_chunks(text, 300)
+        if not segments:
+            return torch.zeros((1, 0))
 
-        sot = self.t3.hp.start_text_token
-        eot = self.t3.hp.stop_text_token
-        text_tokens = F.pad(text_tokens, (1, 0), value=sot)
-        text_tokens = F.pad(text_tokens, (0, 1), value=eot)
+        audio_segments = []
+        for segment in segments:
+            tries = 2
+            while tries > 0:
+                try:
+                    audio_segments.append(
+                        self._generate_chunk(segment, cfg_weight, temperature)
+                    )
+                    break
+                except RuntimeError as e:
+                    if "out of memory" in str(e).lower() and tries > 1:
+                        print("ChatterboxTTS: CUDA out of memory. Clearing cache and retrying...")
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        gc.collect()
+                        tries -= 1
+                        continue
+                    raise
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
-        with torch.inference_mode():
-            speech_tokens = self.t3.inference(
-                t3_cond=self.conds.t3,
-                text_tokens=text_tokens,
-                max_new_tokens=1000,  # TODO: use the value in config
-                temperature=temperature,
-                cfg_weight=cfg_weight,
-            )
-            # Extract only the conditional batch.
-            speech_tokens = speech_tokens[0]
-
-            # TODO: output becomes 1D
-            speech_tokens = drop_invalid_tokens(speech_tokens)
-            speech_tokens = speech_tokens.to(self.device)
-
-            wav, _ = self.s3gen.inference(
-                speech_tokens=speech_tokens,
-                ref_dict=self.conds.gen,
-            )
-            wav = wav.squeeze(0).detach().cpu().numpy()
-            watermarked_wav = self.watermarker.apply_watermark(wav, sample_rate=self.sr)
-        return torch.from_numpy(watermarked_wav).unsqueeze(0)
+        if len(audio_segments) == 1:
+            return audio_segments[0]
+        return torch.cat(audio_segments, dim=1)
