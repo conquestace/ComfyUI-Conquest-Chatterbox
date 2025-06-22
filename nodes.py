@@ -31,6 +31,10 @@ class ChatterboxTTSNode:
                 "cfg_weight": ("FLOAT", {"default": 0.5, "min": 0.2, "max": 1.0, "step": 0.05}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True}),
                 "device": (["cuda", "cpu"], {"default": "cuda" if torch.cuda.is_available() else "cpu"}),
+                "chunk_size": ("INT", {"default": 300, "min": 100, "max": 1000, "step": 50}),
+                "max_retries": ("INT", {"default": 1, "min": 0, "max": 5}),
+                "top_p": ("FLOAT", {"default": 0.8, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "repetition_penalty": ("FLOAT", {"default": 2.0, "min": 0.5, "max": 5.0, "step": 0.1}),
             },
             "optional": {
                 "audio_prompt": ("AUDIO",),
@@ -43,7 +47,8 @@ class ChatterboxTTSNode:
     CATEGORY = "audio/generation"
     OUTPUT_NODE = True 
 
-    def synthesize(self, model_pack_name, text, exaggeration, temperature, cfg_weight, seed, device, audio_prompt=None):
+    def synthesize(self, model_pack_name, text, exaggeration, temperature, cfg_weight, seed, device,
+                  chunk_size, max_retries, top_p, repetition_penalty, audio_prompt=None):
         if not text.strip():
             #print("Chatterbox TTS: Empty text provided, returning silent audio.")
             dummy_sr = 24000 
@@ -92,8 +97,12 @@ class ChatterboxTTSNode:
                 audio_prompt_path=audio_prompt_path_temp,
                 exaggeration=exaggeration,
                 temperature=temperature,
-                cfg_weight=cfg_weight
-            ) 
+                cfg_weight=cfg_weight,
+                top_p=top_p,
+                repetition_penalty=repetition_penalty,
+                chunk_size=chunk_size,
+                max_retries=max_retries,
+            )
         except Exception as e:
             print(f"ChatterboxTTS: Error during TTS generation: {e}")
             dummy_sr = 24000
