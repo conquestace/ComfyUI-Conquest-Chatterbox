@@ -9,8 +9,8 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ChatterboxTTS": "Chatterbox TTS 📢",
-    "ChatterboxVC": "Chatterbox Voice Conversion 🗣️",
+    "ChatterboxTTS": "Conquest Chatterbox TTS",
+    "ChatterboxVC": "Conquest Chatterbox Voice Conversion",
 }
 
 # WEB_DIRECTORY = "./js" 
