@@ -1,231 +1,316 @@
 import os
-import torch
-import folder_paths
 import tempfile
-import soundfile as sf
+import random
 import numpy as np
+import torch
+import soundfile as sf
 
-from .modules.chatterbox_handler import (
-    get_chatterbox_model_pack_names,
-    get_cached_chatterbox_tts_model,
-    get_cached_chatterbox_vc_model,
-    set_chatterbox_seed,
-    CHATTERBOX_MODEL_SUBDIR,
-    DEFAULT_MODEL_PACK_NAME
+from chatterbox.tts import ChatterboxTTS
+from chatterbox.vc  import ChatterboxVC
+from chatterbox.audio_editing import (
+    splice_audios,
+    trim_audio,
+    insert_audio,
+    delete_segment,
+    crossfade,
 )
 
-class ChatterboxTTSNode:
-    @classmethod
-    def INPUT_TYPES(cls):
-        available_model_packs = get_chatterbox_model_pack_names()
-        displayed_packs = [DEFAULT_MODEL_PACK_NAME] + [p for p in available_model_packs if p != DEFAULT_MODEL_PACK_NAME]
-        if not displayed_packs:
-            displayed_packs = [DEFAULT_MODEL_PACK_NAME]
+# -------------------------------------------------------------------------
+# Helper utilities
+# -------------------------------------------------------------------------
 
-        return {
-            "required": {
-                "model_pack_name": (displayed_packs, {"default": DEFAULT_MODEL_PACK_NAME if DEFAULT_MODEL_PACK_NAME in displayed_packs else (displayed_packs[0] if displayed_packs else DEFAULT_MODEL_PACK_NAME)}),
-                "text": ("STRING", {"multiline": True, "default": "Hello, this is a test of Chatterbox TTS in ComfyUI."}),
-                "exaggeration": ("FLOAT", {"default": 0.5, "min": 0.25, "max": 2.0, "step": 0.05}),
-                "temperature": ("FLOAT", {"default": 0.8, "min": 0.05, "max": 5.0, "step": 0.05}),
-                "cfg_weight": ("FLOAT", {"default": 0.5, "min": 0.2, "max": 1.0, "step": 0.05}),
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True}),
-                "device": (["cuda", "cpu"], {"default": "cuda" if torch.cuda.is_available() else "cpu"}),
-            },
-            "optional": {
-                "audio_prompt": ("AUDIO",),
-            }
-        }
+def _seed_everything(seed: int):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    random.seed(seed)
+    np.random.seed(seed)
 
+def _to_numpy_mono(audio_dict):
+    """Convert ComfyUI AUDIO → (wav, sr) numpy mono float32."""
+    wav = audio_dict["waveform"].cpu()
+    sr  = audio_dict["sample_rate"]
+    if wav.ndim == 3:            # (B,C,T)
+        wav = wav[0]             #   -> (C,T)
+    if wav.shape[0] > 1:         # stereo → mono
+        wav = wav.mean(0)
+    return wav.numpy().astype(np.float32), sr
+
+def _numpy_to_comfy(wav_np: np.ndarray, sr: int):
+    """Convert mono numpy wav → ComfyUI AUDIO dict."""
+    tensor = torch.from_numpy(wav_np).unsqueeze(0).unsqueeze(0)  # (1,1,T)
+    return {"waveform": tensor, "sample_rate": sr}
+
+def _empty_audio(sr: int = 24_000):
+    return _numpy_to_comfy(np.zeros(sr, dtype=np.float32), sr)
+
+DEVICE_DEFAULT = "cuda" if torch.cuda.is_available() else "cpu"
+
+# -------------------------------------------------------------------------
+# 1) Text-to-Speech  (now with min_p, top_p, repetition_penalty)
+# -------------------------------------------------------------------------
+
+class ChatterboxTTSExtended:
     RETURN_TYPES = ("AUDIO",)
     RETURN_NAMES = ("audio",)
-    FUNCTION = "synthesize"
-    CATEGORY = "audio/generation"
-    OUTPUT_NODE = True 
+    FUNCTION     = "generate"
+    CATEGORY     = "audio/generation"
+    OUTPUT_NODE  = True
 
-    def synthesize(self, model_pack_name, text, exaggeration, temperature, cfg_weight, seed, device, audio_prompt=None):
-        if not text.strip():
-            #print("Chatterbox TTS: Empty text provided, returning silent audio.")
-            dummy_sr = 24000 
-            silent_waveform = torch.zeros((1, dummy_sr), dtype=torch.float32, device="cpu")
-            return ({"waveform": silent_waveform.unsqueeze(0), "sample_rate": dummy_sr},)
-
-        try:
-            chatterbox_model = get_cached_chatterbox_tts_model(model_pack_name, device_str=device)
-        except Exception as e:
-            print(f"ChatterboxTTS: Error loading/downloading TTS model pack '{model_pack_name}': {e}")
-            dummy_sr = 24000
-            silent_waveform = torch.zeros((1, dummy_sr), dtype=torch.float32, device="cpu")
-            return ({"waveform": silent_waveform.unsqueeze(0), "sample_rate": dummy_sr},)
-
-        set_chatterbox_seed(seed)
-        
-        audio_prompt_path_temp = None
-        if audio_prompt is not None and \
-           audio_prompt.get("waveform") is not None and \
-           audio_prompt["waveform"].numel() > 0:
-            
-            waveform_in = audio_prompt["waveform"] 
-            sample_rate_in = audio_prompt["sample_rate"]
-            waveform_cpu = waveform_in.cpu()
-            if waveform_cpu.shape[0] > 1:
-                print(f"ChatterboxTTS: Audio prompt has batch size {waveform_cpu.shape[0]}, using first item.")
-            current_waveform = waveform_cpu[0] 
-            if current_waveform.shape[0] > 1: 
-                current_waveform = torch.mean(current_waveform, dim=0)
-            else: 
-                current_waveform = current_waveform.squeeze(0)
-            
-            processed_audio_prompt = current_waveform.numpy().astype(np.float32)
-            try:
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
-                    audio_prompt_path_temp = tmp_wav.name
-                sf.write(audio_prompt_path_temp, processed_audio_prompt, sample_rate_in)
-                #print(f"ChatterboxTTS: Using audio prompt from temp file: {audio_prompt_path_temp}")
-            except Exception as e:
-                print(f"ChatterboxTTS: Error writing temp audio prompt file: {e}")
-                audio_prompt_path_temp = None
-
-        try:
-            wav_tensor_chatterbox = chatterbox_model.generate(
-                text,
-                audio_prompt_path=audio_prompt_path_temp,
-                exaggeration=exaggeration,
-                temperature=temperature,
-                cfg_weight=cfg_weight
-            ) 
-        except Exception as e:
-            print(f"ChatterboxTTS: Error during TTS generation: {e}")
-            dummy_sr = 24000
-            silent_waveform = torch.zeros((1, dummy_sr), dtype=torch.float32, device="cpu")
-            return ({"waveform": silent_waveform.unsqueeze(0), "sample_rate": dummy_sr},)
-        finally:
-            if audio_prompt_path_temp and os.path.exists(audio_prompt_path_temp):
-                try:
-                    os.remove(audio_prompt_path_temp)
-                except Exception as e:
-                    print(f"ChatterboxTTS: Error removing temp audio prompt file {audio_prompt_path_temp}: {e}")
-        
-        wav_tensor_comfy = wav_tensor_chatterbox.cpu().unsqueeze(0) 
-        return ({"waveform": wav_tensor_comfy, "sample_rate": chatterbox_model.sr},)
-
-
-class ChatterboxVCNode:
     @classmethod
     def INPUT_TYPES(cls):
-        available_model_packs = get_chatterbox_model_pack_names()
-        displayed_packs = [DEFAULT_MODEL_PACK_NAME] + [p for p in available_model_packs if p != DEFAULT_MODEL_PACK_NAME]
-        if not displayed_packs:
-            displayed_packs = [DEFAULT_MODEL_PACK_NAME]
-
         return {
-            "required": {
-                "model_pack_name": (displayed_packs, {"default": DEFAULT_MODEL_PACK_NAME if DEFAULT_MODEL_PACK_NAME in displayed_packs else (displayed_packs[0] if displayed_packs else DEFAULT_MODEL_PACK_NAME)}),
-                "source_audio": ("AUDIO",),
-                "device": (["cuda", "cpu"], {"default": "cuda" if torch.cuda.is_available() else "cpu"}),
+            "required" : {
+                "text"      : ("STRING",  {"multiline": True,
+                                           "default": "Hello from ComfyUI 🤖"}),
+                "exaggeration" : ("FLOAT", {"default": 0.5, "min": 0.25,
+                                            "max": 2.0, "step": 0.05}),
+                "temperature"  : ("FLOAT", {"default": 0.8, "min": 0.05,
+                                            "max": 5.0, "step": 0.05}),
+                "cfg_weight"   : ("FLOAT", {"default": 0.5, "min": 0.0,
+                                            "max": 1.0, "step": 0.05}),
+                "min_p"        : ("FLOAT", {"default": 0.05, "min": 0.0,
+                                            "max": 1.0, "step": 0.01}),
+                "top_p"        : ("FLOAT", {"default": 1.00, "min": 0.0,
+                                            "max": 1.0, "step": 0.01}),
+                "repetition_penalty": ("FLOAT", {"default": 1.2, "min": 1.0,
+                                                 "max": 2.0, "step": 0.1}),
+                "seed"         : ("INT", {"default": 0, "min": 0,
+                                          "max": 0xffffffffffffffff,
+                                          "control_after_generate": True}),
+                "device"       : (["cuda","cpu"], {"default": DEVICE_DEFAULT}),
             },
             "optional": {
-                "target_voice_audio": ("AUDIO",), # Optional: if not provided, uses default voice from conds.pt
+                "audio_prompt": ("AUDIO",),   # reference voice
             }
         }
 
+    # cache one model per device to avoid reloads
+    _models = {}
+
+    @classmethod
+    def _get_model(cls, device):
+        if device not in cls._models:
+            cls._models[device] = ChatterboxTTS.from_pretrained(device)
+        return cls._models[device]
+
+    def generate(self, text, exaggeration, temperature, cfg_weight,
+                 min_p, top_p, repetition_penalty, seed, device,
+                 audio_prompt=None):
+
+        if not text.strip():
+            return (_empty_audio(),)
+
+        if seed != 0:
+            _seed_everything(int(seed))
+
+        model = self._get_model(device)
+
+        prompt_path = None
+        try:
+            if audio_prompt and audio_prompt["waveform"].numel() > 0:
+                wav_np, sr = _to_numpy_mono(audio_prompt)
+                fd, prompt_path = tempfile.mkstemp(suffix=".wav")
+                os.close(fd)
+                sf.write(prompt_path, wav_np, sr)
+
+            wav = model.generate(
+                text,
+                audio_prompt_path=prompt_path,
+                exaggeration=exaggeration,
+                temperature=temperature,
+                cfg_weight=cfg_weight,
+                min_p=min_p,
+                top_p=top_p,
+                repetition_penalty=repetition_penalty,
+            )
+            return (_numpy_to_comfy(wav.squeeze(0).cpu().numpy(), model.sr),)
+        finally:
+            if prompt_path and os.path.exists(prompt_path):
+                os.remove(prompt_path)
+
+# -------------------------------------------------------------------------
+# 2) Voice Conversion
+# -------------------------------------------------------------------------
+
+class ChatterboxVoiceConversion:
     RETURN_TYPES = ("AUDIO",)
     RETURN_NAMES = ("converted_audio",)
-    FUNCTION = "convert_voice"
-    CATEGORY = "audio/generation"
-    OUTPUT_NODE = True
+    FUNCTION     = "convert"
+    CATEGORY     = "audio/generation"
+    OUTPUT_NODE  = True
 
-    def _save_audio_to_temp_file(self, audio_data, prefix=""):
-        """Helper to save ComfyUI AUDIO dict to a temporary WAV file."""
-        if audio_data is None or \
-           audio_data.get("waveform") is None or \
-           audio_data["waveform"].numel() == 0:
-            return None
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "source_audio": ("AUDIO",),
+                "device": (["cuda", "cpu"], {"default": DEVICE_DEFAULT}),
+            },
+            "optional": {
+                "target_voice_audio": ("AUDIO",),
+            }
+        }
 
-        waveform_in = audio_data["waveform"]
-        sample_rate_in = audio_data["sample_rate"]
-        waveform_cpu = waveform_in.cpu()
+    _models = {}
 
-        if waveform_cpu.shape[0] > 1:
-            print(f"ChatterboxVC: {prefix}Audio has batch size {waveform_cpu.shape[0]}, using first item.")
-        current_waveform = waveform_cpu[0]
+    @classmethod
+    def _get_model(cls, device):
+        if device not in cls._models:
+            cls._models[device] = ChatterboxVC.from_pretrained(device)
+        return cls._models[device]
 
-        if current_waveform.shape[0] > 1: # If C > 1 (stereo or more)
-            print(f"ChatterboxVC: {prefix}Audio has {current_waveform.shape[0]} channels, converting to mono by averaging.")
-            current_waveform = torch.mean(current_waveform, dim=0)
-        else: # If C == 1
-            current_waveform = current_waveform.squeeze(0)
-        
-        processed_audio = current_waveform.numpy().astype(np.float32)
-        
-        temp_file_path = None
+    def convert(self, source_audio, device, target_voice_audio=None):
+        if source_audio is None or source_audio["waveform"].numel() == 0:
+            return (_empty_audio(),)
+
+        model = self._get_model(device)
+
+        # save temp wavs -----------------------------------------------------
+        src_path = tgt_path = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
-                temp_file_path = tmp_wav.name
-            sf.write(temp_file_path, processed_audio, sample_rate_in)
-            #print(f"ChatterboxVC: Saved {prefix}audio to temp file: {temp_file_path}")
-            return temp_file_path
-        except Exception as e:
-            print(f"ChatterboxVC: Error writing temp {prefix}audio file: {e}")
-            if temp_file_path and os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-            return None
+            wav_src, sr_src = _to_numpy_mono(source_audio)
+            fd, src_path = tempfile.mkstemp(suffix=".wav"); os.close(fd)
+            sf.write(src_path, wav_src, sr_src)
 
-    def convert_voice(self, model_pack_name, source_audio, device, target_voice_audio=None):
-        if source_audio is None or source_audio.get("waveform") is None or source_audio["waveform"].numel() == 0:
-            print("ChatterboxVC: No source audio provided, returning silent audio.")
-            dummy_sr = 24000
-            silent_waveform = torch.zeros((1, dummy_sr), dtype=torch.float32, device="cpu")
-            return ({"waveform": silent_waveform.unsqueeze(0), "sample_rate": dummy_sr},)
+            if target_voice_audio and target_voice_audio["waveform"].numel() > 0:
+                wav_tgt, sr_tgt = _to_numpy_mono(target_voice_audio)
+                if sr_tgt != sr_src:
+                    raise ValueError("Source and target voice must share SR")
+                fd, tgt_path = tempfile.mkstemp(suffix=".wav"); os.close(fd)
+                sf.write(tgt_path, wav_tgt, sr_tgt)
 
-        try:
-            vc_model = get_cached_chatterbox_vc_model(model_pack_name, device_str=device)
-        except Exception as e:
-            print(f"ChatterboxVC: Error loading/downloading VC model pack '{model_pack_name}': {e}")
-            dummy_sr = 24000
-            silent_waveform = torch.zeros((1, dummy_sr), dtype=torch.float32, device="cpu")
-            return ({"waveform": silent_waveform.unsqueeze(0), "sample_rate": dummy_sr},)
-
-        source_audio_path_temp = None
-        target_voice_path_temp = None
-
-        try:
-            source_audio_path_temp = self._save_audio_to_temp_file(source_audio, prefix="Source ")
-            if not source_audio_path_temp:
-                raise ValueError("Failed to process source audio.")
-
-            if target_voice_audio is not None and \
-               target_voice_audio.get("waveform") is not None and \
-               target_voice_audio["waveform"].numel() > 0:
-                target_voice_path_temp = self._save_audio_to_temp_file(target_voice_audio, prefix="Target ")
-                #print(f"ChatterboxVC: Using target voice from temp file: {target_voice_path_temp}")
-            else:
-                print("ChatterboxVC: No target voice audio provided or it's empty. Using default reference from model pack if available.")
-            
-            # ChatterboxVC.generate expects file paths
-            converted_wav_tensor = vc_model.generate(
-                audio=source_audio_path_temp,
-                target_voice_path=target_voice_path_temp # This will be None if no target_voice_audio was provided or saving it failed
-            ) # Expected output: (1, num_samples)
-
-        except Exception as e:
-            print(f"ChatterboxVC: Error during voice conversion: {e}")
-            dummy_sr = 24000
-            silent_waveform = torch.zeros((1, dummy_sr), dtype=torch.float32, device="cpu")
-            return ({"waveform": silent_waveform.unsqueeze(0), "sample_rate": dummy_sr},)
+            wav_out = model.generate(src_path, target_voice_path=tgt_path)
+            return (_numpy_to_comfy(wav_out.squeeze(0).cpu().numpy(), model.sr),)
         finally:
-            if source_audio_path_temp and os.path.exists(source_audio_path_temp):
-                try:
-                    os.remove(source_audio_path_temp)
-                except Exception as e:
-                    print(f"ChatterboxVC: Error removing temp source audio file {source_audio_path_temp}: {e}")
-            if target_voice_path_temp and os.path.exists(target_voice_path_temp):
-                try:
-                    os.remove(target_voice_path_temp)
-                except Exception as e:
-                    print(f"ChatterboxVC: Error removing temp target audio file {target_voice_path_temp}: {e}")
-        
-        # ComfyUI AUDIO format: {"waveform": tensor (B, C, T), "sample_rate": int}
-        # ChatterboxVC output: tensor (1, T)
-        vc_wav_tensor_comfy = converted_wav_tensor.cpu().unsqueeze(0) # (1, T) -> (1, 1, T)
-        return ({"waveform": vc_wav_tensor_comfy, "sample_rate": vc_model.sr},)
+            for p in (src_path, tgt_path):
+                if p and os.path.exists(p):
+                    os.remove(p)
+
+# -------------------------------------------------------------------------
+# 3) Audio-editing nodes  (splice, trim, insert, delete, cross-fade)
+# -------------------------------------------------------------------------
+
+class ChatterboxAudioSplice:
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION     = "splice"
+    CATEGORY     = "audio/editing"
+    OUTPUT_NODE  = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "audio_a": ("AUDIO",),
+            "audio_b": ("AUDIO",),
+        }}
+
+    def splice(self, audio_a, audio_b):
+        wav1, sr1 = _to_numpy_mono(audio_a)
+        wav2, sr2 = _to_numpy_mono(audio_b)
+        if sr1 != sr2:
+            raise ValueError("Sampling rates must match")
+        joined = splice_audios([wav1, wav2])
+        return (_numpy_to_comfy(joined, sr1),)
+
+class ChatterboxAudioTrim:
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION     = "trim"
+    CATEGORY     = "audio/editing"
+    OUTPUT_NODE  = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "audio": ("AUDIO",),
+            "start_sec": ("FLOAT", {"default": 0.0, "min": 0}),
+            "end_sec"  : ("FLOAT", {"default": 1.0, "min": 0.01}),
+        }}
+
+    def trim(self, audio, start_sec, end_sec):
+        wav, sr = _to_numpy_mono(audio)
+        out = trim_audio(wav, float(start_sec), float(end_sec), sr)
+        return (_numpy_to_comfy(out, sr),)
+
+class ChatterboxAudioInsert:
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION     = "insert"
+    CATEGORY     = "audio/editing"
+    OUTPUT_NODE  = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "base_audio"  : ("AUDIO",),
+            "insert_audio": ("AUDIO",),
+            "position_sec": ("FLOAT", {"default": 0.0, "min": 0}),
+        }}
+
+    def insert(self, base_audio, insert_audio, position_sec):
+        base_wav, sr = _to_numpy_mono(base_audio)
+        ins_wav,  sr2 = _to_numpy_mono(insert_audio)
+        if sr != sr2:
+            raise ValueError("Sampling rates must match")
+        out = insert_audio(base_wav, ins_wav, float(position_sec), sr)
+        return (_numpy_to_comfy(out, sr),)
+
+class ChatterboxAudioDeleteSegment:
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION     = "delete"
+    CATEGORY     = "audio/editing"
+    OUTPUT_NODE  = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "audio": ("AUDIO",),
+            "start_sec": ("FLOAT", {"default": 0.0, "min": 0}),
+            "end_sec"  : ("FLOAT", {"default": 1.0, "min": 0.01}),
+        }}
+
+    def delete(self, audio, start_sec, end_sec):
+        wav, sr = _to_numpy_mono(audio)
+        out = delete_segment(wav, float(start_sec), float(end_sec), sr)
+        return (_numpy_to_comfy(out, sr),)
+
+class ChatterboxAudioCrossfade:
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION     = "crossfade"
+    CATEGORY     = "audio/editing"
+    OUTPUT_NODE  = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "audio_a": ("AUDIO",),
+            "audio_b": ("AUDIO",),
+            "duration_sec": ("FLOAT", {"default": 0.01, "min": 0.001}),
+        }}
+
+    def crossfade(self, audio_a, audio_b, duration_sec):
+        wav1, sr1 = _to_numpy_mono(audio_a)
+        wav2, sr2 = _to_numpy_mono(audio_b)
+        if sr1 != sr2:
+            raise ValueError("Sampling rates must match")
+        out = crossfade(wav1, wav2, float(duration_sec), sr1)
+        return (_numpy_to_comfy(out, sr1),)
+
+# -------------------------------------------------------------------------
+# Register with ComfyUI
+# -------------------------------------------------------------------------
+
+NODE_CLASS_MAPPINGS = {
+    "Chatterbox TTS (extended)"     : ChatterboxTTSExtended,
+    "Chatterbox Voice Conversion"   : ChatterboxVoiceConversion,
+    "Chatterbox Splice Audio"       : ChatterboxAudioSplice,
+    "Chatterbox Trim Audio"         : ChatterboxAudioTrim,
+    "Chatterbox Insert Audio"       : ChatterboxAudioInsert,
+    "Chatterbox Delete Segment"     : ChatterboxAudioDeleteSegment,
+    "Chatterbox Cross-fade Audio"   : ChatterboxAudioCrossfade,
+}
+
+__all__ = ["NODE_CLASS_MAPPINGS"]
