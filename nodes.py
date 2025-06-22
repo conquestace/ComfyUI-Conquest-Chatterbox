@@ -14,6 +14,13 @@ from .modules.chatterbox_handler import (
     DEFAULT_MODEL_PACK_NAME
 )
 
+
+def _segment_text(text: str, segment_length: int = 300) -> list:
+    """Split ``text`` into fixed length segments."""
+    if segment_length <= 0:
+        return [text]
+    return [text[i:i + segment_length] for i in range(0, len(text), segment_length)]
+
 class ChatterboxTTSNode:
     @classmethod
     def INPUT_TYPES(cls):
@@ -86,27 +93,34 @@ class ChatterboxTTSNode:
                 print(f"ChatterboxTTS: Error writing temp audio prompt file: {e}")
                 audio_prompt_path_temp = None
 
-        try:
-            wav_tensor_chatterbox = chatterbox_model.generate(
-                text,
-                audio_prompt_path=audio_prompt_path_temp,
-                exaggeration=exaggeration,
-                temperature=temperature,
-                cfg_weight=cfg_weight
-            ) 
-        except Exception as e:
-            print(f"ChatterboxTTS: Error during TTS generation: {e}")
+        segments = _segment_text(text, 300)
+        generated_segments = []
+        for idx, segment in enumerate(segments):
+            try:
+                wav_tensor_seg = chatterbox_model.generate(
+                    segment,
+                    audio_prompt_path=audio_prompt_path_temp if idx == 0 else None,
+                    exaggeration=exaggeration,
+                    temperature=temperature,
+                    cfg_weight=cfg_weight
+                )
+                generated_segments.append(wav_tensor_seg)
+            except Exception as e:
+                print(f"ChatterboxTTS: Error during TTS generation of segment {idx + 1}/{len(segments)}: {e}")
+        if audio_prompt_path_temp and os.path.exists(audio_prompt_path_temp):
+            try:
+                os.remove(audio_prompt_path_temp)
+            except Exception as e:
+                print(f"ChatterboxTTS: Error removing temp audio prompt file {audio_prompt_path_temp}: {e}")
+
+        if not generated_segments:
             dummy_sr = 24000
             silent_waveform = torch.zeros((1, dummy_sr), dtype=torch.float32, device="cpu")
             return ({"waveform": silent_waveform.unsqueeze(0), "sample_rate": dummy_sr},)
-        finally:
-            if audio_prompt_path_temp and os.path.exists(audio_prompt_path_temp):
-                try:
-                    os.remove(audio_prompt_path_temp)
-                except Exception as e:
-                    print(f"ChatterboxTTS: Error removing temp audio prompt file {audio_prompt_path_temp}: {e}")
-        
-        wav_tensor_comfy = wav_tensor_chatterbox.cpu().unsqueeze(0) 
+
+        wav_tensor_chatterbox = torch.cat(generated_segments, dim=1)
+
+        wav_tensor_comfy = wav_tensor_chatterbox.cpu().unsqueeze(0)
         return ({"waveform": wav_tensor_comfy, "sample_rate": chatterbox_model.sr},)
 
 
