@@ -6,6 +6,7 @@ import perth
 import torch.nn.functional as F
 import gc
 from huggingface_hub import hf_hub_download
+from safetensors.torch import load_file
 
 from .models.t3 import T3
 from .models.s3tokenizer import S3_SR, drop_invalid_tokens
@@ -51,10 +52,18 @@ class Conditionals:
     gen: dict
 
     def to(self, device):
-        self.t3 = self.t3.to(device=device)
+        # Move all tensors in the dataclass individually to avoid issues
+        moved = {}
+        for k, v in self.t3.__dict__.items():
+            if torch.is_tensor(v):
+                moved[k] = v.to(device)
+            else:
+                moved[k] = v
+        self.t3 = T3Cond(**moved)
+
         for k, v in self.gen.items():
             if torch.is_tensor(v):
-                self.gen[k] = v.to(device=device)
+                self.gen[k] = v.to(device)
         return self
 
     def save(self, fpath: Path):
@@ -84,19 +93,21 @@ class ChatterboxTTS:
     def from_local(cls, ckpt_dir, device) -> 'ChatterboxTTS':
         ckpt_dir = Path(ckpt_dir)
 
+        map_loc = "cpu" if device in {"cpu", "mps"} else None
+
         ve = VoiceEncoder()
-        ve.load_state_dict(torch.load(ckpt_dir / "ve.pt"))
+        ve.load_state_dict(load_file(ckpt_dir / "ve.safetensors", map_location=map_loc))
         ve.to(device).eval()
 
         t3 = T3()
-        t3_state = torch.load(ckpt_dir / "t3_cfg.pt")
+        t3_state = load_file(ckpt_dir / "t3_cfg.safetensors", map_location=map_loc)
         if "model" in t3_state.keys():
             t3_state = t3_state["model"][0]
         t3.load_state_dict(t3_state)
         t3.to(device).eval()
 
         s3gen = S3Gen()
-        s3gen.load_state_dict(torch.load(ckpt_dir / "s3gen.pt"))
+        s3gen.load_state_dict(load_file(ckpt_dir / "s3gen.safetensors", map_location=map_loc), strict=False)
         s3gen.to(device).eval()
 
         tokenizer = EnTokenizer(str(ckpt_dir / "tokenizer.json"))
@@ -109,15 +120,21 @@ class ChatterboxTTS:
 
     @classmethod
     def from_pretrained(cls, device) -> 'ChatterboxTTS':
-        for f in ["ve.pt", "t3_cfg.pt", "s3gen.pt", "tokenizer.json", "conds.pt"]:
+        for f in [
+            "ve.safetensors",
+            "t3_cfg.safetensors",
+            "s3gen.safetensors",
+            "tokenizer.json",
+            "conds.pt",
+        ]:
             hf_hub_download(repo_id=REPO_ID, filename=f)
-        return cls.from_local(Path(hf_hub_download(repo_id=REPO_ID, filename="ve.pt")).parent, device)
+        return cls.from_local(Path(hf_hub_download(repo_id=REPO_ID, filename="ve.safetensors")).parent, device)
 
     def prepare_conditionals(self, wav_fpath, exaggeration=0.5):
         s3gen_ref_wav, _ = librosa.load(wav_fpath, sr=S3GEN_SR)
         ref_16k_wav = librosa.resample(s3gen_ref_wav, orig_sr=S3GEN_SR, target_sr=S3_SR)
 
-        s3gen_ref_wav = s3gen_ref_wav[:self.DEC_COND_LEN]
+        s3gen_ref_wav = s3gen_ref_wav[: self.DEC_COND_LEN]
         s3gen_ref_dict = self.s3gen.embed_ref(s3gen_ref_wav, S3GEN_SR, device=self.device)
 
         if plen := self.t3.hp.speech_cond_prompt_len:
@@ -125,17 +142,17 @@ class ChatterboxTTS:
             t3_cond_prompt_tokens, _ = s3_tokzr.forward([ref_16k_wav[:self.ENC_COND_LEN]], max_len=plen)
             t3_cond_prompt_tokens = torch.atleast_2d(t3_cond_prompt_tokens).to(self.device)
 
-        ve_embed = torch.from_numpy(self.ve.embeds_from_wavs([ref_16k_wav], sample_rate=S3_SR))
-        ve_embed = ve_embed.mean(axis=0, keepdim=True).to(self.device)
-
-        self.conds = Conditionals(
-            T3Cond(
-                speaker_emb=ve_embed,
-                cond_prompt_speech_tokens=t3_cond_prompt_tokens,
-                emotion_adv=exaggeration * torch.ones(1, 1, 1),
-            ).to(self.device),
-            s3gen_ref_dict,
+        ve_embed = torch.from_numpy(
+            self.ve.embeds_from_wavs([ref_16k_wav[: self.ENC_COND_LEN]], sample_rate=S3_SR)
         )
+        ve_embed = ve_embed.mean(axis=0, keepdim=True)
+
+        t3_cond = T3Cond(
+            speaker_emb=ve_embed,
+            cond_prompt_speech_tokens=t3_cond_prompt_tokens,
+            emotion_adv=exaggeration * torch.ones(1, 1, 1),
+        )
+        self.conds = Conditionals(t3_cond, s3gen_ref_dict).to(self.device)
 
     def _generate_segment(
         self,
@@ -144,6 +161,9 @@ class ChatterboxTTS:
         exaggeration=0.5,
         cfg_weight=0.5,
         temperature=0.8,
+        top_p=0.8,
+        repetition_penalty=2.0,
+        min_p=0.0,
     ):
         if audio_prompt_path:
             self.prepare_conditionals(audio_prompt_path, exaggeration)
@@ -152,11 +172,15 @@ class ChatterboxTTS:
 
         if exaggeration != self.conds.t3.emotion_adv[0, 0, 0]:
             _c = self.conds.t3
-            self.conds.t3 = T3Cond(
+            new_t3 = T3Cond(
                 speaker_emb=_c.speaker_emb,
                 cond_prompt_speech_tokens=_c.cond_prompt_speech_tokens,
                 emotion_adv=exaggeration * torch.ones(1, 1, 1),
-            ).to(self.device)
+            )
+            moved = {}
+            for k, v in new_t3.__dict__.items():
+                moved[k] = v.to(self.device) if torch.is_tensor(v) else v
+            self.conds.t3 = T3Cond(**moved)
 
         text = punc_norm(text)
         text_tokens = self.tokenizer.text_to_tokens(text).to(self.device)
@@ -173,6 +197,8 @@ class ChatterboxTTS:
                 text_tokens=text_tokens,
                 max_new_tokens=1000,
                 temperature=temperature,
+                top_p=top_p,
+                repetition_penalty=repetition_penalty,
                 cfg_weight=cfg_weight,
             )[0]
 
@@ -189,11 +215,14 @@ class ChatterboxTTS:
         exaggeration=0.5,
         cfg_weight=0.5,
         temperature=0.8,
+        top_p=0.8,
+        repetition_penalty=2.0,
+        min_p=0.0,
         chunk_size: int = 300,
         max_retries: int = 1,
     ):
-        def safe_segment(t):
-            for attempt in range(max_retries + 1):
+        def _safe_generate_segment(t):
+            for _ in range(max_retries + 1):
                 try:
                     return self._generate_segment(
                         t,
@@ -201,6 +230,9 @@ class ChatterboxTTS:
                         exaggeration=exaggeration,
                         cfg_weight=cfg_weight,
                         temperature=temperature,
+                        top_p=top_p,
+                        repetition_penalty=repetition_penalty,
+                        min_p=min_p,
                     )
                 except RuntimeError as e:
                     if "out of memory" in str(e).lower() and torch.cuda.is_available():
@@ -210,11 +242,11 @@ class ChatterboxTTS:
                     raise
 
         if len(text) <= chunk_size:
-            return safe_segment(text)
+            return _safe_generate_segment(text)
 
         segments = []
         for chunk in chunk_text(text, chunk_size):
-            segment = safe_segment(chunk)
+            segment = _safe_generate_segment(chunk)
             segments.append(segment.squeeze(0).cpu().numpy())
 
         merged = splice_audios(segments)
