@@ -41,8 +41,19 @@ def punc_norm(text: str) -> str:
     return text
 
 
-def chunk_text(text: str, chunk_size: int = 300):
-    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+def tokenize_prompt(text: str, token_length: int = 300):
+    """Split ``text`` into sequential tokens of ``token_length`` characters.
+
+    Each token represents a portion of the text that will be processed
+    independently by the GPU.  This allows very long prompts to be handled
+    in smaller segments without exhausting memory.
+    """
+
+    return [text[i:i + token_length] for i in range(0, len(text), token_length)]
+
+
+# Backwards compatibility alias
+chunk_text = tokenize_prompt
 
 
 @dataclass
@@ -189,9 +200,16 @@ class ChatterboxTTS:
         exaggeration=0.5,
         cfg_weight=0.5,
         temperature=0.8,
-        chunk_size: int = 300,
+        token_length: int = 300,
         max_retries: int = 1,
     ):
+        """Generate audio for ``text``.
+
+        The ``text`` is split into tokens of ``token_length`` characters.
+        Each token is processed sequentially to avoid GPU memory issues with
+        very long prompts. Generated audio segments are concatenated before
+        returning the final waveform.
+        """
         def safe_segment(t):
             for attempt in range(max_retries + 1):
                 try:
@@ -209,11 +227,11 @@ class ChatterboxTTS:
                         continue
                     raise
 
-        if len(text) <= chunk_size:
+        if len(text) <= token_length:
             return safe_segment(text)
 
         segments = []
-        for chunk in chunk_text(text, chunk_size):
+        for chunk in tokenize_prompt(text, token_length):
             segment = safe_segment(chunk)
             segments.append(segment.squeeze(0).cpu().numpy())
 

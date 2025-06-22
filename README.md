@@ -16,6 +16,7 @@ Custom nodes for ComfyUI that integrate the [Resemble AI Chatterbox](https://git
     *   Synthesize speech from text.
     *   Optional voice cloning using an audio prompt.
     *   Adjustable parameters: exaggeration, temperature, CFG weight, seed.
+    *   Prompts are tokenized into 300‑character chunks so long scripts can be processed sequentially.
 *   **Chatterbox Voice Conversion Node:**
     *   Convert the voice in a source audio file to sound like a target voice.
     *   Uses a target audio file for voice characteristics or defaults to a built-in voice if no target is provided.
