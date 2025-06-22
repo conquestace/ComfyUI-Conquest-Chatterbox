@@ -188,19 +188,14 @@ class ChatterboxTTS:
         ).to(device=self.device)
         self.conds = Conditionals(t3_cond, s3gen_ref_dict)
 
-    def generate(
+    def _generate_chunk(
         self,
         text,
-        audio_prompt_path=None,
-        exaggeration=0.5,
-        cfg_weight=0.5,
-        temperature=0.8,
+        exaggeration,
+        cfg_weight,
+        temperature,
     ):
-        if audio_prompt_path:
-            self.prepare_conditionals(audio_prompt_path, exaggeration=exaggeration)
-        else:
-            assert self.conds is not None, "Please `prepare_conditionals` first or specify `audio_prompt_path`"
-
+        """Generate audio for a single chunk of text."""
         # Update exaggeration if needed
         if exaggeration != self.conds.t3.emotion_adv[0, 0, 0]:
             _cond: T3Cond = self.conds.t3
@@ -213,7 +208,7 @@ class ChatterboxTTS:
         # Norm and tokenize text
         text = punc_norm(text)
         text_tokens = self.tokenizer.text_to_tokens(text).to(self.device)
-        text_tokens = torch.cat([text_tokens, text_tokens], dim=0)  # Need two seqs for CFG
+        text_tokens = torch.cat([text_tokens, text_tokens], dim=0)
 
         sot = self.t3.hp.start_text_token
         eot = self.t3.hp.stop_text_token
@@ -228,10 +223,8 @@ class ChatterboxTTS:
                 temperature=temperature,
                 cfg_weight=cfg_weight,
             )
-            # Extract only the conditional batch.
             speech_tokens = speech_tokens[0]
 
-            # TODO: output becomes 1D
             speech_tokens = drop_invalid_tokens(speech_tokens)
             speech_tokens = speech_tokens.to(self.device)
 
@@ -242,3 +235,27 @@ class ChatterboxTTS:
             wav = wav.squeeze(0).detach().cpu().numpy()
             watermarked_wav = self.watermarker.apply_watermark(wav, sample_rate=self.sr)
         return torch.from_numpy(watermarked_wav).unsqueeze(0)
+
+    def generate(
+        self,
+        text,
+        audio_prompt_path=None,
+        exaggeration=0.5,
+        cfg_weight=0.5,
+        temperature=0.8,
+    ):
+        if audio_prompt_path:
+            self.prepare_conditionals(audio_prompt_path, exaggeration=exaggeration)
+        else:
+            assert self.conds is not None, "Please `prepare_conditionals` first or specify `audio_prompt_path`"
+
+        # Split text into 300 character chunks
+        chunks = [text[i:i + 300] for i in range(0, len(text), 300)] or [""]
+
+        wavs = []
+        for chunk in chunks:
+            wavs.append(self._generate_chunk(chunk, exaggeration, cfg_weight, temperature))
+
+        if len(wavs) == 1:
+            return wavs[0]
+        return torch.cat(wavs, dim=1)
