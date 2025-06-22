@@ -14,6 +14,19 @@ from .modules.chatterbox_handler import (
     DEFAULT_MODEL_PACK_NAME
 )
 
+
+def _segment_text(text, max_chars=300):
+    """Split text into a list of strings each with at most ``max_chars`` characters."""
+    if not text:
+        return []
+    segments = []
+    start = 0
+    while start < len(text):
+        end = start + max_chars
+        segments.append(text[start:end])
+        start = end
+    return segments
+
 class ChatterboxTTSNode:
     @classmethod
     def INPUT_TYPES(cls):
@@ -85,15 +98,25 @@ class ChatterboxTTSNode:
             except Exception as e:
                 print(f"ChatterboxTTS: Error writing temp audio prompt file: {e}")
                 audio_prompt_path_temp = None
+        if audio_prompt_path_temp:
+            try:
+                chatterbox_model.prepare_conditionals(audio_prompt_path_temp, exaggeration=exaggeration)
+            except Exception as e:
+                print(f"ChatterboxTTS: Error preparing audio prompt: {e}")
+        
+        text_segments = _segment_text(text, 300)
+        wav_chunks = []
 
         try:
-            wav_tensor_chatterbox = chatterbox_model.generate(
-                text,
-                audio_prompt_path=audio_prompt_path_temp,
-                exaggeration=exaggeration,
-                temperature=temperature,
-                cfg_weight=cfg_weight
-            ) 
+            for seg in text_segments:
+                chunk = chatterbox_model.generate(
+                    seg,
+                    audio_prompt_path=None,
+                    exaggeration=exaggeration,
+                    temperature=temperature,
+                    cfg_weight=cfg_weight
+                )
+                wav_chunks.append(chunk)
         except Exception as e:
             print(f"ChatterboxTTS: Error during TTS generation: {e}")
             dummy_sr = 24000
@@ -105,8 +128,14 @@ class ChatterboxTTSNode:
                     os.remove(audio_prompt_path_temp)
                 except Exception as e:
                     print(f"ChatterboxTTS: Error removing temp audio prompt file {audio_prompt_path_temp}: {e}")
-        
-        wav_tensor_comfy = wav_tensor_chatterbox.cpu().unsqueeze(0) 
+
+        if not wav_chunks:
+            dummy_sr = 24000
+            silent_waveform = torch.zeros((1, dummy_sr), dtype=torch.float32, device="cpu")
+            return ({"waveform": silent_waveform.unsqueeze(0), "sample_rate": dummy_sr},)
+
+        wav_tensor_chatterbox = torch.cat(wav_chunks, dim=1)
+        wav_tensor_comfy = wav_tensor_chatterbox.cpu().unsqueeze(0)
         return ({"waveform": wav_tensor_comfy, "sample_rate": chatterbox_model.sr},)
 
 
