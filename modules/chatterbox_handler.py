@@ -21,7 +21,7 @@ VC_MODEL_CACHE = {}
 CHATTERBOX_MODEL_SUBDIR = "chatterbox_tts"
 CHATTERBOX_REPO_ID = "ResembleAI/chatterbox"
 
-CHATTERBOX_FILES_TO_DOWNLOAD = ["ve.pt", "t3_cfg.pt", "s3gen.pt", "tokenizer.json", "conds.pt"]
+CHATTERBOX_FILES_TO_DOWNLOAD = ["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"]
 DEFAULT_MODEL_PACK_NAME = "resembleai_default_voice"
 
 def get_chatterbox_model_pack_names():
@@ -79,7 +79,7 @@ def download_chatterbox_model_pack_if_missing(model_pack_name):
     
     all_files_successfully_managed = True
 
-    vc_required_files = ["s3gen.pt", "conds.pt"]
+    vc_required_files = ["s3gen.safetensors", "conds.pt"]
 
     files_to_check = CHATTERBOX_FILES_TO_DOWNLOAD
     
@@ -153,7 +153,7 @@ def load_chatterbox_vc_model(model_pack_name, device_str="cuda"):
     #print(f"ChatterboxVC: Attempting to load VC model pack '{model_pack_name}' from '{ckpt_dir}'.")
 
     if not download_chatterbox_model_pack_if_missing(model_pack_name):
-        vc_min_files = ["s3gen.pt", "conds.pt"]
+        vc_min_files = ["s3gen.safetensors", "conds.pt"]
         for f_name in vc_min_files:
             if not os.path.exists(os.path.join(ckpt_dir, f_name)):
                  print(f"ChatterboxVC: Critical file '{f_name}' for VC is missing from pack '{model_pack_name}' after download attempt. Loading will likely fail.")
@@ -170,7 +170,7 @@ def load_chatterbox_vc_model(model_pack_name, device_str="cuda"):
         model = ChatterboxVC.from_local(ckpt_dir, device=device_str)
     except Exception as e:
         print(f"ChatterboxVC: Error during ChatterboxVC.from_local('{ckpt_dir}', device='{device_str}'): {e}")
-        print(f"ChatterboxVC: Please ensure at least 's3gen.pt' and optionally 'conds.pt' (for default voice) are present in {ckpt_dir} or can be downloaded from {CHATTERBOX_REPO_ID}.")
+        print(f"ChatterboxVC: Please ensure at least 's3gen.safetensors' and optionally 'conds.pt' (for default voice) are present in {ckpt_dir} or can be downloaded from {CHATTERBOX_REPO_ID}.")
         raise
     return model
 
@@ -215,7 +215,6 @@ def set_chatterbox_seed(seed: int):
     
     torch.manual_seed(actual_seed_for_torch_random)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(actual_seed_for_torch_random)
         torch.cuda.manual_seed_all(actual_seed_for_torch_random)
     random.seed(actual_seed_for_torch_random)
     np.random.seed(actual_seed_for_numpy)
