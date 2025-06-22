@@ -230,6 +230,10 @@ class T3(nn.Module):
         Args:
             text_tokens: a 1D (unbatched) or 2D (batched) tensor.
         """
+        # Use default from hyperparameters if not provided
+        if max_new_tokens is None:
+            max_new_tokens = self.hp.max_new_tokens
+
         # Validate / sanitize inputs
         assert prepend_prompt_speech_tokens is None, "not implemented"
         _ensure_BOT_EOT(text_tokens, self.hp)
