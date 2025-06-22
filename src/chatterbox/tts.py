@@ -14,6 +14,7 @@ from .models.tokenizers import EnTokenizer
 from .models.voice_encoder import VoiceEncoder
 from .models.t3.modules.cond_enc import T3Cond
 from .audio_editing import splice_audios
+from .tokenization import PromptTokenizer
 
 
 REPO_ID = "ResembleAI/chatterbox"
@@ -39,11 +40,6 @@ def punc_norm(text: str) -> str:
     if not any(text.endswith(p) for p in {".", "!", "?", "-", ","}):
         text += "."
     return text
-
-
-def chunk_text(text: str, chunk_size: int = 300):
-    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
-
 
 @dataclass
 class Conditionals:
@@ -209,11 +205,14 @@ class ChatterboxTTS:
                         continue
                     raise
 
-        if len(text) <= chunk_size:
-            return safe_segment(text)
+        tokenizer = PromptTokenizer(chunk_size)
+        tokens = tokenizer.tokenize(text)
+
+        if len(tokens) == 1:
+            return safe_segment(tokens[0])
 
         segments = []
-        for chunk in chunk_text(text, chunk_size):
+        for chunk in tokens:
             segment = safe_segment(chunk)
             segments.append(segment.squeeze(0).cpu().numpy())
 
