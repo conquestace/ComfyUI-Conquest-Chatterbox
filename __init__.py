@@ -1,7 +1,11 @@
 import os
 import folder_paths
-from .nodes import ChatterboxTTSNode, ChatterboxVCNode
+from .nodes import ChatterboxTTSExtended, ChatterboxVoiceConversion
 from .modules.chatterbox_handler import CHATTERBOX_MODEL_SUBDIR, DEFAULT_MODEL_PACK_NAME
+
+# Backwards compatibility: old names expected by workflow examples
+ChatterboxTTSNode = ChatterboxTTSExtended
+ChatterboxVCNode  = ChatterboxVoiceConversion
 
 NODE_CLASS_MAPPINGS = {
     "ChatterboxTTS": ChatterboxTTSNode,

@@ -243,14 +243,14 @@ class ChatterboxAudioInsert:
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {
-            "base_audio"  : ("AUDIO",),
-            "insert_audio": ("AUDIO",),
-            "position_sec": ("FLOAT", {"default": 0.0, "min": 0}),
+            "base_audio"   : ("AUDIO",),
+            "segment_audio": ("AUDIO",),
+            "position_sec" : ("FLOAT", {"default": 0.0, "min": 0}),
         }}
 
-    def insert(self, base_audio, insert_audio, position_sec):
+    def insert(self, base_audio, segment_audio, position_sec):
         base_wav, sr = _to_numpy_mono(base_audio)
-        ins_wav,  sr2 = _to_numpy_mono(insert_audio)
+        ins_wav,  sr2 = _to_numpy_mono(segment_audio)
         if sr != sr2:
             raise ValueError("Sampling rates must match")
         out = insert_audio(base_wav, ins_wav, float(position_sec), sr)
