@@ -211,7 +211,7 @@ class ChatterboxTTS:
             speech_tokens = self.t3.inference(
                 t3_cond=self.conds.t3,
                 text_tokens=text_tokens,
-                max_new_tokens=1000,  # TODO: use the value in config
+                max_new_tokens=self.t3.hp.max_new_tokens,
                 temperature=temperature,
                 cfg_weight=cfg_weight,
             )
@@ -233,6 +233,7 @@ class ChatterboxTTS:
         exaggeration=0.5,
         cfg_weight=0.5,
         temperature=0.8,
+        chunk_size=300,
     ):
         if audio_prompt_path:
             self.prepare_conditionals(audio_prompt_path, exaggeration=exaggeration)
@@ -248,7 +249,7 @@ class ChatterboxTTS:
                 emotion_adv=exaggeration * torch.ones(1, 1, 1),
             ).to(device=self.device)
 
-        segments = split_text_into_chunks(text, 300)
+        segments = split_text_into_chunks(text, chunk_size)
         if not segments:
             return torch.zeros((1, 0))
 

@@ -11,6 +11,8 @@ class T3Config:
     stop_speech_token = 6562
     speech_tokens_dict_size = 8194
     max_speech_tokens = 4096
+    # Maximum number of speech tokens to generate in inference
+    max_new_tokens = 1000
 
     llama_config_name = "Llama_520M"
     input_pos_emb = "learned"
