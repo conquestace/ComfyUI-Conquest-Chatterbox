@@ -14,7 +14,7 @@ from .modules.chatterbox_handler import (
     DEFAULT_MODEL_PACK_NAME
 )
 
-class ChatterboxTTSNode:
+class Conquest-ChatterboxTTSNode:
     @classmethod
     def INPUT_TYPES(cls):
         available_model_packs = get_chatterbox_model_pack_names()
@@ -124,7 +124,7 @@ class ChatterboxTTSNode:
         return ({"waveform": wav_tensor_comfy, "sample_rate": chatterbox_model.sr},)
 
 
-class ChatterboxVCNode:
+class Conquest-ChatterboxVCNode:
     @classmethod
     def INPUT_TYPES(cls):
         available_model_packs = get_chatterbox_model_pack_names()
