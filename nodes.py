@@ -29,6 +29,7 @@ class ChatterboxTTSNode:
                 "exaggeration": ("FLOAT", {"default": 0.5, "min": 0.25, "max": 2.0, "step": 0.05}),
                 "temperature": ("FLOAT", {"default": 0.8, "min": 0.05, "max": 5.0, "step": 0.05}),
                 "cfg_weight": ("FLOAT", {"default": 0.5, "min": 0.2, "max": 1.0, "step": 0.05}),
+                "chunk_size": ("INT", {"default": 300, "min": 1, "max": 1000}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True}),
                 "device": (["cuda", "cpu"], {"default": "cuda" if torch.cuda.is_available() else "cpu"}),
             },
@@ -43,7 +44,7 @@ class ChatterboxTTSNode:
     CATEGORY = "audio/generation"
     OUTPUT_NODE = True 
 
-    def synthesize(self, model_pack_name, text, exaggeration, temperature, cfg_weight, seed, device, audio_prompt=None):
+    def synthesize(self, model_pack_name, text, exaggeration, temperature, cfg_weight, chunk_size, seed, device, audio_prompt=None):
         if not text.strip():
             #print("Chatterbox TTS: Empty text provided, returning silent audio.")
             dummy_sr = 24000 
@@ -92,8 +93,9 @@ class ChatterboxTTSNode:
                 audio_prompt_path=audio_prompt_path_temp,
                 exaggeration=exaggeration,
                 temperature=temperature,
-                cfg_weight=cfg_weight
-            ) 
+                cfg_weight=cfg_weight,
+                chunk_size=chunk_size,
+            )
         except Exception as e:
             print(f"ChatterboxTTS: Error during TTS generation: {e}")
             dummy_sr = 24000
